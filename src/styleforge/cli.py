@@ -7,6 +7,9 @@ from typing import Annotated
 
 import typer
 
+from styleforge.frames import FramesError
+from styleforge.frames import mad as compute_mad
+from styleforge.frames import extract_first_frame, extract_last_frame
 from styleforge.script import ScriptInvalid, load_script, output_dir
 
 app = typer.Typer(
@@ -44,3 +47,61 @@ def check(
         f" / 下载 {defaults.download} / 重试 {defaults.retry} 次"
     )
     typer.echo(f"输出目录：{output_dir(script).as_posix()}")
+
+
+@app.command()
+def lastframe(
+    video_path: Annotated[Path, typer.Argument(help="视频文件路径")],
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="尾帧 PNG 输出路径")] = None,
+) -> None:
+    """抽取视频最后一帧（尾帧）为 PNG，供下一镜头接力使用。"""
+    if output is None:
+        typer.echo("错误：缺少输出路径。用法：styleforge lastframe <视频.mp4> -o <输出.png>")
+        raise typer.Exit(code=1)
+    try:
+        out = extract_last_frame(video_path, output)
+    except FramesError as exc:
+        typer.echo(f"错误：{exc}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"尾帧已抽取：{out}")
+
+
+@app.command()
+def firstframe(
+    video_path: Annotated[Path, typer.Argument(help="视频文件路径")],
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="首帧 PNG 输出路径")] = None,
+) -> None:
+    """抽取视频第一帧（首帧）为 PNG，用于验证输入帧是否被模型忠实执行。"""
+    if output is None:
+        typer.echo("错误：缺少输出路径。用法：styleforge firstframe <视频.mp4> -o <输出.png>")
+        raise typer.Exit(code=1)
+    try:
+        out = extract_first_frame(video_path, output)
+    except FramesError as exc:
+        typer.echo(f"错误：{exc}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"首帧已抽取：{out}")
+
+
+@app.command()
+def mad(
+    image_a: Annotated[Path, typer.Argument(help="图片 A 路径")],
+    image_b: Annotated[Path, typer.Argument(help="图片 B 路径")],
+    threshold: Annotated[
+        float | None,
+        typer.Option("--threshold", "-t", help="MAD 阈值；提供时输出是否超阈的结论（流水线默认 25）"),
+    ] = None,
+) -> None:
+    """计算两张图片的 MAD（64×36 全像素平均绝对差，0-255）。"""
+    try:
+        value = compute_mad(image_a, image_b)
+    except FramesError as exc:
+        typer.echo(f"错误：{exc}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"MAD = {value:.2f}")
+    if threshold is None:
+        return
+    if value > threshold:
+        typer.echo(f"结论：MAD {value:.2f} 超过阈值 {threshold:.2f}，判定不通过")
+        raise typer.Exit(code=1)
+    typer.echo(f"结论：MAD {value:.2f} 未超过阈值 {threshold:.2f}，判定通过")
