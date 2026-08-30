@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# 构建与打包
+dist/
+*.egg-info/
+
+# 测试
+.pytest_cache/
+
+# 个人调研笔记，永不入库
+.scratch/
