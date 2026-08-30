@@ -28,7 +28,7 @@ def write_script(tmp_path: Path, text: str, images: tuple[str, ...] = ()) -> Pat
 VALID_SCRIPT = """\
 name: my-story
 defaults:
-  model: gemini-omni
+  model: omni-1.1-flash
   duration: 8
   aspect: "16:9"
   outputs: 1
@@ -76,7 +76,7 @@ def test_valid_script_prints_ok_summary(tmp_path):
     assert result.exit_code == 0, result.output
     assert "剧本校验通过：my-story" in result.output
     assert "镜头数：3" in result.output
-    assert "模型 gemini-omni" in result.output
+    assert "模型 omni-1.1-flash" in result.output
     assert "时长 8 秒" in result.output
     assert "画幅 16:9" in result.output
     assert "输出数 1" in result.output
@@ -89,7 +89,7 @@ def test_defaults_omitted_uses_builtin_defaults(tmp_path):
     path = write_script(tmp_path, 'name: bare\nshots:\n  - prompt: "一镜"\n')
     result = runner.invoke(app, ["check", str(path)])
     assert result.exit_code == 0, result.output
-    assert "模型 gemini-omni" in result.output
+    assert "模型 omni-1.1-flash" in result.output
     assert "时长 8 秒" in result.output
     assert "画幅 16:9" in result.output
     assert "输出数 1" in result.output
@@ -168,10 +168,10 @@ def test_image_path_not_exist_names_shot(tmp_path):
     assert "missing.png" in result.output
 
 
-def test_gemini_omni_rejects_non_8s_duration(tmp_path):
+def test_omni_flash_rejects_non_8s_duration(tmp_path):
     text = (
         "name: omni6\n"
-        "defaults: {model: gemini-omni, duration: 6}\n"
+        "defaults: {model: omni-1.1-flash, duration: 6}\n"
         'shots:\n  - prompt: "x"\n'
     )
     path = write_script(tmp_path, text)
@@ -218,7 +218,7 @@ def test_unknown_top_level_field_reported(tmp_path):
 def test_multiple_errors_all_listed(tmp_path):
     text = (
         "name: multi\n"
-        "defaults: {model: gemini-omni, duration: 6}\n"
+        "defaults: {model: omni-1.1-flash, duration: 6}\n"
         "shots:\n"
         "  - first_frame: {source: none}\n"
     )

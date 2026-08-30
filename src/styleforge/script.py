@@ -12,18 +12,25 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from styleforge.frames import DEFAULT_MAD_THRESHOLD
+
 # ---------------------------------------------------------------- 常量表
 
-# 默认模型（调研定标：用户实际使用 Gemini Omni，8 秒档，支持首帧+尾帧）。
-DEFAULT_MODEL = "gemini-omni"
+# 默认模型（Amendments 第 2 条：一律 Omni 1.1 Flash，8 秒档，支持首帧+尾帧）。
+DEFAULT_MODEL = "omni-1.1-flash"
 
 # 模型目录：模型 ID → 该模型支持的单段时长（秒）。
 # 新模型在此加一行即可接入；未来更多能力约束也扩到这张表。
 MODEL_CATALOG: dict[str, frozenset[int]] = {
-    "gemini-omni": frozenset({8}),
+    "omni-1.1-flash": frozenset({8}),
     "gemini-omni-flash": frozenset({8}),
     "veo-3.1-fast": frozenset({4, 6, 8, 10}),
     "veo-3.1-quality": frozenset({8}),
+}
+
+# 旧模型名 → 新模型名：剧本写旧名时给出迁移提示，绝不静默接受。
+MODEL_RENAMES: dict[str, str] = {
+    "gemini-omni": "omni-1.1-flash",
 }
 
 # Flow 视频偏好（Video preferences）里的画幅选项。
@@ -53,6 +60,7 @@ class Defaults(BaseModel):
     outputs: int = Field(default=1, ge=1, le=4)
     download: str = "original-720p"
     retry: int = Field(default=1, ge=0)
+    mad_threshold: float = Field(default=DEFAULT_MAD_THRESHOLD, ge=0)
 
 
 class FirstFrame(BaseModel):
@@ -65,12 +73,20 @@ class FirstFrame(BaseModel):
 
 
 class Shot(BaseModel):
-    """镜头：一段提示词加一个首帧来源；省略 first_frame 视为 none（纯文生视频）。"""
+    """镜头：一段提示词加一个首帧来源；省略 first_frame 视为 none（纯文生视频）。
+
+    model/duration/aspect/outputs 可在镜头级覆盖全局默认；
+    未写的字段取 None，运行时回落到 defaults（user story 6）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(min_length=1)
     first_frame: FirstFrame | None = None
+    model: str | None = None
+    duration: int | None = None
+    aspect: str | None = None
+    outputs: int | None = Field(default=None, ge=1, le=4)
 
 
 class Script(BaseModel):
@@ -108,6 +124,7 @@ _FIELD_NAMES: dict[str, str] = {
     "outputs": "输出数",
     "download": "下载档位",
     "retry": "重试次数",
+    "mad_threshold": "MAD 阈值",
 }
 
 
@@ -193,8 +210,37 @@ def semantic_errors(script: Script, base_dir: Path) -> list[str]:
     errors = _name_semantic_errors(script.name)
     errors.extend(_defaults_semantic_errors(script.defaults))
     for index, shot in enumerate(script.shots, start=1):
-        errors.extend(_shot_semantic_errors(shot, index, base_dir))
+        errors.extend(_shot_semantic_errors(shot, index, base_dir, script.defaults))
     return errors
+
+
+def effective_shot_params(shot: Shot, defaults: Defaults) -> dict:
+    """镜头级覆盖合并全局默认后的生效参数（model/duration/aspect/outputs）。"""
+    return {
+        "model": shot.model if shot.model is not None else defaults.model,
+        "duration": shot.duration if shot.duration is not None else defaults.duration,
+        "aspect": shot.aspect if shot.aspect is not None else defaults.aspect,
+        "outputs": shot.outputs if shot.outputs is not None else defaults.outputs,
+    }
+
+
+def _model_errors(context: str, model: str) -> list[str]:
+    """模型名校验（旧名迁移提示 / 未知模型）；context 形如 "defaults.model（模型）"。"""
+    if model in MODEL_RENAMES:
+        renamed = MODEL_RENAMES[model]
+        return [f"{context}：模型名已更新：{model} → {renamed}，请修改剧本"]
+    if model not in MODEL_CATALOG:
+        available = "、".join(sorted(MODEL_CATALOG))
+        return [f'{context}：未知模型 "{model}"（可用：{available}）']
+    return []
+
+
+def _duration_errors(context: str, model: str, duration: int) -> list[str]:
+    """模型×时长组合校验；context 形如 "defaults.duration（时长）"。"""
+    if model in MODEL_CATALOG and duration not in MODEL_CATALOG[model]:
+        allowed = "、".join(f"{n} 秒" for n in sorted(MODEL_CATALOG[model]))
+        return [f"{context}：模型 {model} 不支持 {duration} 秒（允许：{allowed}）"]
+    return []
 
 
 def _name_semantic_errors(name: str) -> list[str]:
@@ -209,18 +255,10 @@ def _name_semantic_errors(name: str) -> list[str]:
 
 def _defaults_semantic_errors(defaults: Defaults) -> list[str]:
     errors: list[str] = []
-    if defaults.model not in MODEL_CATALOG:
-        available = "、".join(sorted(MODEL_CATALOG))
-        errors.append(
-            f'defaults.model（模型）：未知模型 "{defaults.model}"（可用：{available}）'
-        )
-    else:
-        allowed = "、".join(f"{n} 秒" for n in sorted(MODEL_CATALOG[defaults.model]))
-        if defaults.duration not in MODEL_CATALOG[defaults.model]:
-            errors.append(
-                f"defaults.duration（时长）：模型 {defaults.model} 不支持 "
-                f"{defaults.duration} 秒（允许：{allowed}）"
-            )
+    errors.extend(_model_errors("defaults.model（模型）", defaults.model))
+    errors.extend(
+        _duration_errors("defaults.duration（时长）", defaults.model, defaults.duration)
+    )
     if defaults.aspect not in ASPECT_RATIOS:
         allowed_aspects = " / ".join(sorted(ASPECT_RATIOS))
         errors.append(
@@ -235,10 +273,31 @@ def _defaults_semantic_errors(defaults: Defaults) -> list[str]:
     return errors
 
 
-def _shot_semantic_errors(shot: Shot, index: int, base_dir: Path) -> list[str]:
+def _shot_semantic_errors(
+    shot: Shot, index: int, base_dir: Path, defaults: Defaults | None = None
+) -> list[str]:
     errors: list[str] = []
     if not shot.prompt.strip():
         errors.append(f"镜头 {index}：prompt（提示词）：不能为空白")
+    # 镜头级覆盖用与全局完全一致的规则校验（校验的是合并后的生效组合）。
+    defaults = defaults or Defaults()
+    if shot.model is not None:
+        errors.extend(_model_errors(f"镜头 {index}：model（模型）", shot.model))
+    if shot.model is not None or shot.duration is not None:
+        effective = effective_shot_params(shot, defaults)
+        errors.extend(
+            _duration_errors(
+                f"镜头 {index}：duration（时长）",
+                effective["model"],
+                effective["duration"],
+            )
+        )
+    if shot.aspect is not None and shot.aspect not in ASPECT_RATIOS:
+        allowed_aspects = " / ".join(sorted(ASPECT_RATIOS))
+        errors.append(
+            f'镜头 {index}：aspect（画幅）：非法画幅 "{shot.aspect}"'
+            f"（允许：{allowed_aspects}）"
+        )
     first_frame = shot.first_frame
     if first_frame is None:
         return errors
@@ -306,6 +365,7 @@ def _collect_all_errors(exc: ValidationError, data: dict, base_dir: Path) -> lis
     （如模型×时长组合非法），check 能一次报出所有可发现的问题。
     """
     errors = _translate_validation_error(exc)
+    defaults: Defaults | None = None
     try:
         defaults = Defaults.model_validate(data.get("defaults") or {})
     except ValidationError:
@@ -321,7 +381,7 @@ def _collect_all_errors(exc: ValidationError, data: dict, base_dir: Path) -> lis
                 shot = Shot.model_validate(item)
             except ValidationError:
                 continue  # 该镜头自身有结构错误，已在结构错误里逐条报告
-            errors.extend(_shot_semantic_errors(shot, index, base_dir))
+            errors.extend(_shot_semantic_errors(shot, index, base_dir, defaults))
     name = data.get("name")
     if isinstance(name, str):
         errors.extend(_name_semantic_errors(name))
