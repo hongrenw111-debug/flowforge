@@ -668,20 +668,31 @@ class BbBrowserDriver(Driver):
         self._log("已提交生成（Create）")
 
     def wait_for_completion(self, timeout: float) -> ClipInfo:
-        """媒体 UUID diff 轮询：页面出现生成前没有的媒体 UUID 即完成。
-
-        取 DOM 顺序第一个新增为本次产物（首个成功变体，其余留在项目里）。
-        超过 timeout 抛 DriverTimeoutError；绝不自动重复提交。
-        """
+        """轮询生成完成：优先探测 Flow 媒体 UUID，兜底捕获网络请求或生成状态。"""
         baseline = self._media_baseline
         if baseline is None:
-            # 防御：合同要求先 generate；未记录基线时以当前页面为基线再 diff。
             baseline = set(self._media_names())
             self._media_baseline = baseline
 
         def first_new_media() -> str | None:
+            # 1. 优先从 DOM 媒体链接提取
             new = [name for name in self._media_names() if name not in baseline]
-            return new[0] if new else None
+            if new:
+                return new[0]
+            # 2. 从标签页网络请求日志中捕获 batchCheckAsyncVideoGenerationStatus 返回的媒体 UUID
+            try:
+                reqs = self._run_cli("network", "requests", "--tab", self._tab, "--filter", "batchCheckAsyncVideoGenerationStatus", "--json")
+                items = reqs.get("networkRequests", [])
+                for item in reversed(items):
+                    body = item.get("requestBody") or ""
+                    match = re.search(r'"name":"([0-9a-fA-F-]{36})"', body)
+                    if match:
+                        uuid = match.group(1)
+                        if uuid not in baseline:
+                            return uuid
+            except Exception:
+                pass
+            return None
 
         clip_id = str(
             self._poll(
@@ -707,10 +718,39 @@ class BbBrowserDriver(Driver):
                 "（可用 download_dir 参数或 STYLEFORGE_DOWNLOAD_DIR 环境变量指定）"
             )
 
-        # 1. 下载前记录目录内容：只认此后新出现的文件，忽略历史下载。
+        # 1. 尝试通过 Chrome 导航到直链直接获取或触发下载
+        if self._media_baseline:
+            try:
+                target_uuid = list(self._media_baseline)[-1]
+                url = f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={target_uuid}"
+                res = self._run_cli("open", url, "--json")
+                dl_tab = res.get("tab") or res.get("tabId")
+                time.sleep(2)
+                if dl_tab:
+                    try:
+                        tab_info = self._run_cli("get", "url", "--tab", str(dl_tab), "--json")
+                        final_url = tab_info.get("value") or tab_info.get("url")
+                        if final_url and "flow-content.google" in final_url:
+                            out_file = dest_dir / f"shot-{self._download_seq + 1:02d}.mp4"
+                            self._download_seq += 1
+                            import urllib.request
+                            urllib.request.urlretrieve(final_url, out_file)
+                            if out_file.is_file() and out_file.stat().st_size >= self._min_clip_bytes:
+                                self._run_cli("close", "--tab", str(dl_tab), "--json")
+                                self._log(f"已直接下载并归档视频：{out_file.name}（{out_file.stat().st_size} 字节）")
+                                return out_file
+                    except Exception:
+                        pass
+                    try:
+                        self._run_cli("close", "--tab", str(dl_tab), "--json")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 2. 传统下载菜单与监控 Downloads 目录
         before = self._download_dir_entries()
 
-        # 2. 下载图标 → Original 档（原生 click；菜单弹出有延迟，定位放进轮询）。
         def click_download_entry() -> str | None:
             try:
                 refs = self._snap()
@@ -751,7 +791,6 @@ class BbBrowserDriver(Driver):
             ),
         )
 
-        # 3. 轮询下载目录：新文件落稳（两次采样大小一致且无 .crdownload 残留）。
         candidate = Path(
             self._poll(
                 self._download_timeout,
@@ -763,7 +802,6 @@ class BbBrowserDriver(Driver):
             )
         )
 
-        # 4. 完整性校验：体积下限 + ffprobe 时长探测，拒收伪视频并删除（零残留）。
         size = candidate.stat().st_size
         if size < self._min_clip_bytes:
             candidate.unlink(missing_ok=True)
@@ -778,7 +816,6 @@ class BbBrowserDriver(Driver):
             candidate.unlink(missing_ok=True)
             raise DriverError(f"伪视频已拒收并删除：{candidate.name}（{exc}）") from exc
 
-        # 5. 移动进归档目录。
         self._download_seq += 1
         dest = dest_dir / f"clip-{self._download_seq:02d}.mp4"
         shutil.move(str(candidate), str(dest))

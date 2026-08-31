@@ -1,0 +1,16 @@
+name: tea-party-girl
+
+defaults:
+  model: omni-1.1-flash
+  duration: 8
+  aspect: "9:16"
+  outputs: 1
+  download: original-720p
+  retry: 0
+  mad_threshold: 25.0
+
+shots:
+  - prompt: "镜头平缓推近特写。阳光透过温室玻璃洒落，金发绿瞳的小女孩眼神温柔地微笑着，双手倾斜白瓷金边茶壶，热红茶缓缓注入雕花茶杯中，杯口升起淡淡白汽，微风轻拂金色发丝与花边发箍。(Audio: soft liquid pouring into cup, warm greenhouse ambiance, gentle harp melody, '为你准备了刚泡好的红茶哦。')"
+    first_frame:
+      source: image
+      path: assets/tea-girl.png
