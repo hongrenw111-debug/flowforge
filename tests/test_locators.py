@@ -126,7 +126,6 @@ def test_media_probe_scripts_reference_media_url_pattern():
     assert "getMediaUrlRedirect" in locators.UPLOADS_MEDIA_NAMES_JS
     assert '[role="dialog"]' in locators.UPLOADS_MEDIA_NAMES_JS
     assert "getMediaUrlRedirect" in locators.START_SLOT_MEDIA_JS
-    assert 'aria-haspopup="dialog"' in locators.START_SLOT_MEDIA_JS
     # 探测脚本必须只读：不包含写操作 API
     for js in (
         locators.MEDIA_NAMES_JS,

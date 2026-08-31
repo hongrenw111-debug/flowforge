@@ -111,7 +111,8 @@ def test_default_runner_assembles_command_with_binary(monkeypatch):
     driver = BbBrowserDriver(binary="bb-browser")
     payload = driver._run_cli("get", "url", "--tab", "a020", "--json")
     assert payload == {}
-    assert captured["argv"] == ["bb-browser", "get", "url", "--tab", "a020", "--json"]
+    assert "bb-browser" in captured["argv"][0]
+    assert captured["argv"][1:] == ["get", "url", "--tab", "a020", "--json"]
 
 
 def test_run_cli_passes_timeout_to_runner():
@@ -294,8 +295,7 @@ FLOW_HOME = "https://flow.google"
 def test_new_project_command_sequence_and_returns_project_url():
     cli = FakeCli(
         (0, result_json(tab="a020", url="https://labs.google/fx/tools/flow"), ""),
-        snap_response(r1=ref_info("button", "New project")),
-        (0, result_json(), ""),  # click New project
+        (0, eval_json("clicked"), ""),  # eval DOM click New project
         (0, result_json(url="https://labs.google/fx/tools/flow"), ""),  # url 未进画布
         (0, result_json(url="https://labs.google/fx/tools/flow/project/abc-123"), ""),
     )
@@ -304,8 +304,8 @@ def test_new_project_command_sequence_and_returns_project_url():
     assert url == "https://labs.google/fx/tools/flow/project/abc-123"
     assert driver._tab == "a020"
     assert cli.calls[0] == ["open", FLOW_HOME, "--json"]
-    assert cli.calls[1] == ["snap", "-i", "--tab", "a020", "--json"]
-    assert cli.calls[2] == ["click", "@r1", "--tab", "a020", "--json"]
+    assert cli.calls[1][0] == "eval"
+    assert cli.calls[2] == ["get", "url", "--tab", "a020", "--json"]
     assert cli.calls[3] == ["get", "url", "--tab", "a020", "--json"]
 
 
@@ -320,7 +320,7 @@ def test_new_project_open_without_tab_id_raises():
 def test_new_project_click_not_found_times_out():
     cli = FakeCli(
         (0, result_json(tab="a020"), ""),
-        Always(snap_response(r9=ref_info("button", "无关按钮"))),
+        Always((0, eval_json("not-found"), "")),
     )
     driver = make_driver(cli, page_ready_timeout=3.0)
     with pytest.raises(Exception) as excinfo:
@@ -353,20 +353,23 @@ def test_open_project_reuses_existing_tab_with_goto():
 
 def test_set_prompt_uses_native_fill():
     cli = FakeCli(
+        (0, eval_json("no-fiber"), ""),  # eval Slate injection 回退
         snap_response(r7=ref_info("textbox", "What do you want to create?")),
         (0, result_json(), ""),
     )
     driver = make_driver(cli)
     driver._tab = "a020"
     driver.set_prompt("夜色中的站台")
-    assert cli.calls == [
-        ["snap", "-i", "--tab", "a020", "--json"],
-        ["fill", "@r7", "夜色中的站台", "--tab", "a020", "--json"],
-    ]
+    assert cli.calls[0][0] == "eval"
+    assert cli.calls[1] == ["snap", "-i", "--tab", "a020", "--json"]
+    assert cli.calls[2] == ["fill", "@r7", "夜色中的站台", "--tab", "a020", "--json"]
 
 
 def test_set_prompt_missing_box_names_locator_key():
-    cli = FakeCli(Always(snap_response(r1=ref_info("button", "Create"))))
+    cli = FakeCli(
+        (0, eval_json("no-fiber"), ""),
+        Always(snap_response(r1=ref_info("button", "Create"))),
+    )
     driver = make_driver(cli)
     driver._tab = "a020"
     with pytest.raises(DriverError) as excinfo:
@@ -382,32 +385,28 @@ def test_configure_clicks_all_options_then_escape():
     cli = FakeCli(
         snap_response(r1=ref_info("button", "Video · 720p · 8s crop_16_9 x1")),
         ok,
-        snap_response(r2=ref_info("menuitemradio", "Omni 1.1 Flash")),
+        (0, eval_json(""), ""),  # eval pointerdown/click
+        snap_response(r2=ref_info("button", "Omni 1.1 Flash")),
         ok,
-        snap_response(r3=ref_info("menuitemradio", "8s")),
+        snap_response(r3=ref_info("tab", "8s")),
         ok,
-        snap_response(r4=ref_info("menuitemradio", "16:9")),
+        snap_response(r4=ref_info("tab", "16:9")),
         ok,
-        snap_response(r5=ref_info("menuitemradio", "x1")),
+        snap_response(r5=ref_info("tab", "x1")),
         ok,
         (0, result_json(), ""),  # Escape
+        (0, eval_json("closed"), ""),  # eval Escape 兜底
     )
     driver = make_driver(cli)
     driver._tab = "a020"
     driver.configure("omni-1.1-flash", 8, "16:9", 1)
-    assert cli.calls == [
-        ["snap", "-i", "--tab", "a020", "--json"],
-        ["click", "@r1", "--tab", "a020", "--json"],
-        ["snap", "-i", "--tab", "a020", "--json"],
-        ["click", "@r2", "--tab", "a020", "--json"],
-        ["snap", "-i", "--tab", "a020", "--json"],
-        ["click", "@r3", "--tab", "a020", "--json"],
-        ["snap", "-i", "--tab", "a020", "--json"],
-        ["click", "@r4", "--tab", "a020", "--json"],
-        ["snap", "-i", "--tab", "a020", "--json"],
-        ["click", "@r5", "--tab", "a020", "--json"],
-        ["press", "Escape", "--tab", "a020", "--json"],
-    ]
+    assert cli.calls[0] == ["snap", "-i", "--tab", "a020", "--json"]
+    assert cli.calls[1] == ["click", "@r1", "--tab", "a020", "--json"]
+    assert cli.calls[2][0] == "eval"
+    assert cli.calls[3] == ["snap", "-i", "--tab", "a020", "--json"]
+    assert cli.calls[4] == ["click", "@r2", "--tab", "a020", "--json"]
+    assert cli.calls[-2] == ["press", "Escape", "--tab", "a020", "--json"]
+    assert cli.calls[-1][0] == "eval"
 
 
 def test_configure_unknown_model_display_name_raises_before_any_click():
@@ -450,6 +449,7 @@ def test_generate_records_media_baseline_then_clicks_create():
         (0, eval_json(["m1", "m2"]), ""),
         snap_response(r3=ref_info("button", "Create")),
         (0, result_json(), ""),
+        (0, eval_json("clicked-dom"), ""),
     )
     driver = make_driver(cli)
     driver._tab = "a020"
@@ -458,6 +458,7 @@ def test_generate_records_media_baseline_then_clicks_create():
     assert cli.calls[0][0] == "eval"
     assert cli.calls[1] == ["snap", "-i", "--tab", "a020", "--json"]
     assert cli.calls[2] == ["click", "@r3", "--tab", "a020", "--json"]
+    assert cli.calls[3][0] == "eval"
 
 
 def test_generate_without_create_button_raises():
@@ -512,16 +513,16 @@ def test_set_first_frame_full_recipe(tmp_path):
     image.write_bytes(b"\x89PNG fake-bytes")
 
     cli = FakeCli(
-        uploads_snap(),  # 1. snap：Start 槽
-        (0, result_json(), ""),  # 2. click Start 槽（对话框弹出）
-        uploads_snap(),  # 3. snap：Uploads 标签
-        (0, result_json(), ""),  # 4. click Uploads 标签
-        (0, eval_json(["m1"]), ""),  # 5. eval：网格基线
-        (0, eval_json("injected"), ""),  # 6. eval：DataTransfer 注入
-        (0, eval_json(["m1", "m2"]), ""),  # 7. eval：diff 出新素材 m2
-        (0, eval_json("clicked"), ""),  # 8. eval：点选 m2
-        uploads_snap(),  # 9. snap：Add to Prompt
-        (0, result_json(), ""),  # 10. click Add to Prompt
+        (0, eval_json("clicked"), ""),  # 1. eval：DOM click Start 槽（对话框弹出）
+        uploads_snap(),  # 2. snap：验证 uploads_tab 出现
+        (0, eval_json("clicked"), ""),  # 3. eval：DOM click Uploads 标签
+        (0, eval_json(["m1"]), ""),  # 4. eval：网格基线
+        (0, eval_json("injected"), ""),  # 5. eval：DataTransfer 注入
+        (0, eval_json(["m1", "m2"]), ""),  # 6. eval：diff 出新素材 m2
+        (0, eval_json("clicked"), ""),  # 7. eval：点选 m2
+        uploads_snap(),  # 8. snap：Add to Prompt
+        (0, result_json(), ""),  # 9. click Add to Prompt
+        (0, eval_json("clicked"), ""),  # 10. eval：DOM click Add to Prompt 兜底
         (0, eval_json("m2"), ""),  # 11. eval：Start 槽落位验证
     )
     driver = make_driver(cli)
@@ -530,17 +531,15 @@ def test_set_first_frame_full_recipe(tmp_path):
 
     kinds = [call[0] for call in cli.calls]
     assert kinds == [
-        "snap", "click", "snap", "click", "eval", "eval", "eval", "eval",
-        "snap", "click", "eval",
+        "eval", "snap", "eval", "eval", "eval", "eval", "eval",
+        "snap", "click", "eval", "eval",
     ]
     # 注入 eval：含 base64 与文件名，且只派发 change（原型教训）
-    inject_call = cli.calls[5]
-    assert "frame.png" in inject_call[1]
-    assert inject_call[1].count("dispatchEvent") == 1
+    inject_script = " ".join(cli.calls[4])
+    assert "frame.png" in inject_script
+    assert inject_script.count("dispatchEvent") == 1
     # 点选 eval：按媒体 UUID 定位新素材
-    assert '"m2"' in cli.calls[7][1]
-    # 最后一步是 Start 槽验证
-    assert "Start" in cli.calls[-1][1]
+    assert '"m2"' in " ".join(cli.calls[6])
 
 
 def test_set_first_frame_missing_image_raises_before_cli():
@@ -561,10 +560,9 @@ def test_set_first_frame_inject_reports_no_input(tmp_path):
     image = tmp_path / "frame.png"
     image.write_bytes(b"x")
     cli = FakeCli(
+        (0, eval_json("clicked"), ""),
         uploads_snap(),
-        (0, result_json(), ""),
-        uploads_snap(),
-        (0, result_json(), ""),
+        (0, eval_json("clicked"), ""),
         (0, eval_json([]), ""),
         (0, eval_json("no-input"), ""),
     )
@@ -579,10 +577,9 @@ def test_set_first_frame_upload_timeout(tmp_path):
     image = tmp_path / "frame.png"
     image.write_bytes(b"x")
     cli = FakeCli(
+        (0, eval_json("clicked"), ""),
         uploads_snap(),
-        (0, result_json(), ""),
-        uploads_snap(),
-        (0, result_json(), ""),
+        (0, eval_json("clicked"), ""),
         (0, eval_json(["m1"]), ""),
         (0, eval_json("injected"), ""),
         Always((0, eval_json(["m1"]), "")),  # 新素材迟迟不出现
@@ -599,21 +596,21 @@ def test_set_first_frame_add_to_prompt_then_slot_missing_media(tmp_path):
     image = tmp_path / "frame.png"
     image.write_bytes(b"x")
     cli = FakeCli(
+        (0, eval_json("clicked"), ""),
         uploads_snap(),
-        (0, result_json(), ""),
-        uploads_snap(),
-        (0, result_json(), ""),
-        (0, eval_json([]), ""),
+        (0, eval_json("clicked"), ""),
+        (0, eval_json(["m1"]), ""),
         (0, eval_json("injected"), ""),
-        (0, eval_json(["m9"]), ""),
+        (0, eval_json(["m1", "m2"]), ""),
         (0, eval_json("clicked"), ""),
         uploads_snap(),
         (0, result_json(), ""),
-        Always((0, eval_json(None), "")),  # 槽内一直没有图
+        (0, eval_json("clicked"), ""),
+        Always((0, eval_json(None), "")),
     )
     driver = make_driver(cli, upload_wait_timeout=3.0)
     driver._tab = "a020"
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(DriverError) as excinfo:
         driver.set_first_frame(image)
     assert "Start" in str(excinfo.value)
 

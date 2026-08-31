@@ -12,3 +12,7 @@ dist/
 
 # 个人调研笔记，永不入库
 .scratch/
+
+# 运行时产物
+output/
+.mimosa/

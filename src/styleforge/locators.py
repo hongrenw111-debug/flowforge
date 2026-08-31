@@ -152,34 +152,34 @@ LOCATORS: dict[str, Locator] = {
         name="remove",
         match="contains",
     ),
-    # 参数面板选项（name 运行时由显示名映射给出）
+    # 参数面板选项（name 运行时由显示名映射给出，实测 role 为 button 或 tab，match 改为 contains 兼容图标前缀）
     "params_model_option": Locator(
         key="params_model_option",
         description="参数面板模型选项（名称见 MODEL_DISPLAY_NAMES）",
         role=None,
         name="",
-        match="exact",
+        match="contains",
     ),
     "params_duration_option": Locator(
         key="params_duration_option",
         description="参数面板时长选项（显示名形如 8s）",
         role=None,
         name="",
-        match="exact",
+        match="contains",
     ),
     "params_aspect_option": Locator(
         key="params_aspect_option",
         description="参数面板画幅选项（显示名见 ASPECT_DISPLAY_NAMES）",
         role=None,
         name="",
-        match="exact",
+        match="contains",
     ),
     "params_outputs_option": Locator(
         key="params_outputs_option",
         description="参数面板输出数选项（显示名形如 x1）",
         role=None,
         name="",
-        match="exact",
+        match="contains",
     ),
 }
 
@@ -215,24 +215,93 @@ def outputs_display(outputs: int) -> str:
 
 # ---------------------------------------------------------------- eval 配方
 # 全部片段返回 JSON 字符串（JSON.stringify 包裹），驱动侧统一 json.loads。
+# 严格使用标准 function() 语法，避免 => 箭头中的 > 符号在 Windows 批处理下被误判为输出重定向。
+
+
+# 顶栏 New project 按钮 DOM 点击（实测 React 对快照 CDP click 无响应，DOM click 一击即中）。
+NEW_PROJECT_DOM_CLICK_JS = (
+    'JSON.stringify((function() {'
+    ' var btns = Array.from(document.querySelectorAll("button, div[role=\\"button\\"], a"));'
+    ' for (var i = 0; i < btns.length; i++) {'
+    '   var b = btns[i];'
+    '   var text = (b.textContent || "").trim();'
+    '   var aria = b.getAttribute("aria-label") || "";'
+    '   if (text.indexOf("New project") !== -1 || aria.indexOf("New project") !== -1) {'
+    '     b.click();'
+    '     return "clicked";'
+    '   }'
+    ' }'
+    ' return "not-found";'
+    '})())'
+)
+
+
+# 底栏 Start 首帧槽 DOM 点击（Radix UI 触发器，React DOM click 可靠弹出对话框）。
+START_SLOT_DOM_CLICK_JS = (
+    'JSON.stringify((function() {'
+    ' var el = document.querySelector("[aria-haspopup=\\"dialog\\"]");'
+    ' if (!el) {'
+    '   var els = Array.from(document.querySelectorAll("div, button"));'
+    '   for (var i = 0; i < els.length; i++) {'
+    '     if ((els[i].textContent || "").trim() === "Start") { el = els[i]; break; }'
+    '   }'
+    ' }'
+    ' if (el) { el.click(); return "clicked"; }'
+    ' return "not-found";'
+    '})())'
+)
+
+
+# Start 对话框内 Uploads 标签 DOM 点击。
+UPLOADS_TAB_DOM_CLICK_JS = (
+    'JSON.stringify((function() {'
+    ' var dlg = document.querySelector(\'[role="dialog"]\') || document;'
+    ' var tabs = Array.from(dlg.querySelectorAll(\'[role="tab"], button\'));'
+    ' for (var i = 0; i < tabs.length; i++) {'
+    '   var t = tabs[i];'
+    '   var text = (t.textContent || "").trim();'
+    '   if (text.indexOf("Uploads") !== -1) {'
+    '     t.click();'
+    '     return "clicked";'
+    '   }'
+    ' }'
+    ' return "not-found";'
+    '})())'
+)
 
 
 # 页面上全部媒体 UUID（getMediaUrlRedirect 的 name 参数）：生成前后 diff
 # 出新增即为本次产物身份（媒体 UUID diff，防幽灵产物——樱之诗 watcher_v6 教训）。
 MEDIA_NAMES_JS = (
-    'JSON.stringify([...document.querySelectorAll("[src*=getMediaUrlRedirect]")].map('
-    "el => { try { return new URL(el.src).searchParams.get(\"name\"); }"
-    " catch { return null; } }).filter(Boolean))"
+    'JSON.stringify((function() {'
+    ' var els = Array.from(document.querySelectorAll("[src*=getMediaUrlRedirect]"));'
+    ' var res = [];'
+    ' for (var i = 0; i < els.length; i++) {'
+    '   try {'
+    '     var name = new URL(els[i].src).searchParams.get("name");'
+    '     if (name) res.push(name);'
+    '   } catch (e) {}'
+    ' }'
+    ' return res;'
+    '})())'
 )
 
 # Start 对话框 Uploads 网格内的媒体 UUID（限定 role=dialog，避免把 Start 槽
 # 已挂的图算进网格基线）。素材 alt 是通用文案，只能按媒体 UUID diff 定位新上传。
 UPLOADS_MEDIA_NAMES_JS = (
-    'JSON.stringify((() => { const dlg = document.querySelector(\'[role="dialog"]\');'
-    " if (!dlg) return [];"
-    " return [...dlg.querySelectorAll('img[src*=\"getMediaUrlRedirect\"]')].map("
-    "i => { try { return new URL(i.src).searchParams.get(\"name\"); }"
-    " catch { return null; } }).filter(Boolean); })())"
+    'JSON.stringify((function() {'
+    ' var dlg = document.querySelector(\'[role="dialog"]\');'
+    ' if (!dlg) return [];'
+    ' var imgs = Array.from(dlg.querySelectorAll("img[src*=\\"getMediaUrlRedirect\\"]"));'
+    ' var res = [];'
+    ' for (var i = 0; i < imgs.length; i++) {'
+    '   try {'
+    '     var name = new URL(imgs[i].src).searchParams.get("name");'
+    '     if (name) res.push(name);'
+    '   } catch (e) {}'
+    ' }'
+    ' return res;'
+    '})())'
 )
 
 
@@ -244,15 +313,21 @@ def upload_click_js(media_name: str) -> str:
     与樱之诗教训（React 拒绝 JS 合成 input/change 事件）不冲突。
     """
     return (
-        'JSON.stringify((() => { const dlg = document.querySelector(\'[role="dialog"]\');'
-        f" const name = {json.dumps(media_name)};"
+        'JSON.stringify((function() {'
+        ' var dlg = document.querySelector(\'[role="dialog"]\');'
+        f' var name = {json.dumps(media_name)};'
         ' if (!dlg) return "no-dialog";'
-        " const img = [...dlg.querySelectorAll('img[src*=\"getMediaUrlRedirect\"]')].find("
-        "i => { try { return new URL(i.src).searchParams.get(\"name\") === name; }"
-        " catch { return false; } });"
-        ' if (!img) return "not-found";'
-        " img.click();"
-        ' return "clicked"; })())'
+        ' var imgs = Array.from(dlg.querySelectorAll("img[src*=\\"getMediaUrlRedirect\\"]"));'
+        ' for (var i = 0; i < imgs.length; i++) {'
+        '   try {'
+        '     if (new URL(imgs[i].src).searchParams.get("name") === name) {'
+        '       imgs[i].click();'
+        '       return "clicked";'
+        '     }'
+        '   } catch (e) {}'
+        ' }'
+        ' return "not-found";'
+        '})())'
     )
 
 
@@ -263,30 +338,142 @@ def inject_file_js(data_base64: str, filename: str, mime: str) -> str:
     **只派发 change 事件**——同时派发 input+change 会双重上传（原型实测坑）。
     """
     return (
-        "JSON.stringify((() => {"
-        f" const b64 = {json.dumps(data_base64)};"
-        f" const filename = {json.dumps(filename)};"
-        f" const mime = {json.dumps(mime)};"
-        " const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));"
-        " const file = new File([bytes], filename, {type: mime});"
-        ' const input = [...document.querySelectorAll("input[type=file]")].find('
-        'i => i.accept === "image/*");'
+        'JSON.stringify((function() {'
+        f' var b64 = {json.dumps(data_base64)};'
+        f' var filename = {json.dumps(filename)};'
+        f' var mime = {json.dumps(mime)};'
+        ' var raw = atob(b64);'
+        ' var bytes = new Uint8Array(raw.length);'
+        ' for (var i = 0; i < raw.length; i++) {'
+        '   bytes[i] = raw.charCodeAt(i);'
+        ' }'
+        ' var file = new File([bytes], filename, {type: mime});'
+        ' var inputs = Array.from(document.querySelectorAll("input[type=file]"));'
+        ' var input = null;'
+        ' for (var j = 0; j < inputs.length; j++) {'
+        '   if (inputs[j].accept === "image/*") { input = inputs[j]; break; }'
+        ' }'
         ' if (!input) return "no-input";'
-        " const dt = new DataTransfer(); dt.items.add(file);"
-        " input.files = dt.files;"
-        " input.dispatchEvent(new Event('change', {bubbles: true}));"
-        ' return "injected"; })())'
+        ' var dt = new DataTransfer(); dt.items.add(file);'
+        ' input.files = dt.files;'
+        ' input.dispatchEvent(new Event("change", {bubbles: true}));'
+        ' return "injected";'
+        '})())'
+    )
+
+
+def inject_file_from_var_js(var_name: str, filename: str, mime: str) -> str:
+    """从页内全局变量中读取 Base64 并注入 input[type=file]（避开 Windows 命令行 32KB 上限）。"""
+    return (
+        'JSON.stringify((function() {'
+        f' var b64 = window[{json.dumps(var_name)}] || "";'
+        f' var filename = {json.dumps(filename)};'
+        f' var mime = {json.dumps(mime)};'
+        ' if (!b64) return "no-data";'
+        ' var raw = atob(b64);'
+        ' var bytes = new Uint8Array(raw.length);'
+        ' for (var i = 0; i < raw.length; i++) {'
+        '   bytes[i] = raw.charCodeAt(i);'
+        ' }'
+        ' var file = new File([bytes], filename, {type: mime});'
+        ' var inputs = Array.from(document.querySelectorAll("input[type=file]"));'
+        ' var input = null;'
+        ' for (var j = 0; j < inputs.length; j++) {'
+        '   if (inputs[j].accept === "image/*") { input = inputs[j]; break; }'
+        ' }'
+        ' if (!input) return "no-input";'
+        ' var dt = new DataTransfer(); dt.items.add(file);'
+        ' input.files = dt.files;'
+        ' input.dispatchEvent(new Event("change", {bubbles: true}));'
+        ' return "injected";'
+        '})())'
     )
 
 
 # Start 槽当前挂载的媒体 UUID（未挂图返回 null）：Add to Prompt 后的落位验证。
 START_SLOT_MEDIA_JS = (
-    'JSON.stringify((() => { const slot = [...document.querySelectorAll('
-    "'[aria-haspopup=\"dialog\"]')].find("
-    'el => (el.textContent || "").trim().startsWith("Start"));'
-    " if (!slot) return null;"
-    " const img = slot.querySelector('img[src*=\"getMediaUrlRedirect\"]');"
-    " if (!img) return null;"
-    " try { return new URL(img.src).searchParams.get(\"name\"); }"
-    " catch { return null; } })())"
+    'JSON.stringify((function() {'
+    ' var dlg = document.querySelector(\'[role="dialog"]\');'
+    ' var imgs = Array.from(document.querySelectorAll(\'img[src*="getMediaUrlRedirect"]\'));'
+    ' for (var i = 0; i < imgs.length; i++) {'
+    '   var img = imgs[i];'
+    '   if (dlg && dlg.contains(img)) continue;'
+    '   try {'
+    '     var name = new URL(img.src).searchParams.get("name");'
+    '     if (name) return name;'
+    '   } catch (e) {}'
+    ' }'
+    ' return null;'
+    '})())'
+)
+
+# Start 对话框内 Add to Prompt 按钮 DOM 点击。
+ADD_TO_PROMPT_DOM_CLICK_JS = (
+    'JSON.stringify((function() {'
+    ' var btns = Array.from(document.querySelectorAll("button"));'
+    ' for (var i = 0; i < btns.length; i++) {'
+    '   var b = btns[i];'
+    '   var text = (b.textContent || "").trim();'
+    '   if (text.indexOf("Add to Prompt") !== -1) {'
+    '     b.click();'
+    '     return "clicked";'
+    '   }'
+    ' }'
+    ' return "not-found";'
+    '})())'
+)
+
+
+def set_slate_prompt_js(text: str) -> str:
+    """针对 Slate.js React 状态树注入提示词并触发 React 更新，激活 Create 按钮。"""
+    return (
+        'JSON.stringify((function() {'
+        ' var box = document.querySelector("[data-slate-editor=true], div[contenteditable=true]");'
+        ' if (!box) return "no-box";'
+        ' var fiberKey = Object.keys(box).find(function(k){ return k.indexOf("__reactFiber") === 0; });'
+        ' if (!fiberKey) return "no-fiber";'
+        ' var curr = box[fiberKey];'
+        ' while(curr && (!curr.memoizedProps || !curr.memoizedProps.editor)) curr = curr.return;'
+        ' if (!curr) return "no-editor";'
+        ' var editor = curr.memoizedProps.editor;'
+        f' var text = {json.dumps(text)};'
+        ' editor.select({anchor: {path: [0, 0], offset: 0}, focus: {path: [0, 0], offset: 0}});'
+        ' editor.insertText(text);'
+        ' editor.onChange();'
+        ' if (typeof curr.memoizedProps.onChange === "function") {'
+        '   curr.memoizedProps.onChange(editor.children);'
+        ' }'
+        ' return "injected";'
+        '})())'
+    )
+
+
+# 提交生成（Create）DOM 按钮点击配方。
+CREATE_BUTTON_DOM_CLICK_JS = (
+    'JSON.stringify((function() {'
+    ' var btn = Array.from(document.querySelectorAll("button")).find(function(b){'
+    '   return (b.textContent||"").indexOf("Create") !== -1;'
+    ' });'
+    ' if (!btn) return "no-btn";'
+    ' var propKey = Object.keys(btn).find(function(k){ return k.indexOf("__reactProps") === 0; });'
+    ' var props = btn[propKey] || {};'
+    ' if (typeof props.onClick === "function") {'
+    '   try {'
+    '     props.onClick({ isTrusted: true, nativeEvent: { isTrusted: true }, currentTarget: btn, target: btn, preventDefault: function(){}, stopPropagation: function(){} });'
+    '     return "clicked-handler";'
+    '   } catch(e) {}'
+    ' }'
+    ' btn.click();'
+    ' return "clicked-dom";'
+    '})())'
+)
+
+
+# 关闭参数菜单 Popover（派发 Escape 键盘事件）。
+CLOSE_MENU_ESCAPE_JS = (
+    'JSON.stringify((function() {'
+    ' document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true}));'
+    ' document.dispatchEvent(new KeyboardEvent("keyup", {key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true}));'
+    ' return "closed";'
+    '})())'
 )

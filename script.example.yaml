@@ -1,0 +1,27 @@
+# styleforge 示例剧本：包含锚定帧模式与尾帧接力模式
+
+name: sakura-journey-demo
+
+defaults:
+  model: omni-1.1-flash   # 默认视频生成模型（Omni 1.1 Flash）
+  duration: 8             # 单镜头时长（秒）：Omni 支持 8s 档位
+  aspect: "16:9"          # 画面画幅：16:9 / 9:16 / 1:1
+  outputs: 1              # 单次生成候选数：1-4
+  download: original-720p # 下载清晰度档位
+  retry: 0                # 失败重试次数（真实生成建议为 0）
+  mad_threshold: 25.0     # 逐镜首尾帧比对 MAD 告警阈值
+
+shots:
+  # 镜头 1：锚定帧模式（使用本地高精度原画 CG 作为输入首帧）
+  - prompt: "第一镜：樱花盛开的坡道上，少女停下脚步仰望飘落的花瓣，柔和春光洒落。(Audio: '又到这个季节了。')"
+    first_frame:
+      source: image
+      path: assets/character-sakura.png
+
+  # 镜头 2：尾帧接力模式（使用上一镜头的最后一帧作为本镜首帧，保证动作连贯）
+  - prompt: "第二镜：少女轻快地向前迈出一步，微风吹拂长发与裙摆，镜头平滑跟随跟拍。"
+    first_frame:
+      source: last_frame
+
+  # 镜头 3：纯文生视频模式（无需首帧，由提示词自由发挥）
+  - prompt: "第三镜：空镜头，蓝天白云下远处的电车缓缓驶过铁道口，带有怀旧日系动漫色调。"

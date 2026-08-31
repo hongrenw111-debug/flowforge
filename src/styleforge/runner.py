@@ -414,11 +414,11 @@ def _execute_attempt(
     else:
         driver.set_first_frame(input_frame)
     _pause(options, options.action_delay)
-    driver.set_prompt(shot.prompt)
-    _pause(options, options.action_delay)
     driver.configure(
         params["model"], params["duration"], params["aspect"], params["outputs"]
     )
+    _pause(options, options.action_delay)
+    driver.set_prompt(shot.prompt)
     _pause(options, options.action_delay)
     driver.generate()
     clip = driver.wait_for_completion(options.wait_timeout)

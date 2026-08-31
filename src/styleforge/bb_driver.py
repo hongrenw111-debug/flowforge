@@ -23,6 +23,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Callable, Sequence
@@ -30,18 +31,26 @@ from typing import Callable, Sequence
 from styleforge.driver import ClipInfo, Driver, DriverError, DriverTimeoutError
 from styleforge.frames import FramesError, ensure_valid_video
 from styleforge.locators import (
+    ADD_TO_PROMPT_DOM_CLICK_JS,
     ASPECT_DISPLAY_NAMES,
+    CLOSE_MENU_ESCAPE_JS,
+    CREATE_BUTTON_DOM_CLICK_JS,
     FLOW_HOME_URL,
     LOCATORS,
     MEDIA_NAMES_JS,
     MODEL_DISPLAY_NAMES,
+    NEW_PROJECT_DOM_CLICK_JS,
     PROJECT_URL_MARKER,
+    START_SLOT_DOM_CLICK_JS,
     START_SLOT_MEDIA_JS,
     UPLOADS_MEDIA_NAMES_JS,
+    UPLOADS_TAB_DOM_CLICK_JS,
     Locator,
     duration_display,
+    inject_file_from_var_js,
     inject_file_js,
     outputs_display,
+    set_slate_prompt_js,
     upload_click_js,
 )
 
@@ -152,11 +161,23 @@ class BbBrowserDriver(Driver):
 
     # ---------------------------------------------------------------- CLI seam
 
+    def _resolve_binary(self) -> str:
+        """Windows 下若 binary 无法直接执行，尝试补齐 .cmd 扩展名或全局 npm 路径。"""
+        if sys.platform == "win32" and not self._binary.lower().endswith((".cmd", ".exe", ".bat")):
+            which_cmd = shutil.which(f"{self._binary}.cmd") or shutil.which(self._binary)
+            if which_cmd:
+                return which_cmd
+            npm_global = Path(os.environ.get("APPDATA", "")) / "npm" / f"{self._binary}.cmd"
+            if npm_global.is_file():
+                return str(npm_global)
+        return self._binary
+
     def _default_cli_runner(self, args: Sequence[str], timeout: float) -> tuple[int, str, str]:
         """生产执行器：subprocess 调 bb-browser，UTF-8 解码，超时交给 subprocess。"""
+        bin_path = self._resolve_binary()
         try:
             proc = subprocess.run(
-                [self._binary, *(str(a) for a in args)],
+                [bin_path, *(str(a) for a in args)],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -282,7 +303,8 @@ class BbBrowserDriver(Driver):
     def _eval(self, script: str) -> object:
         """页内执行 JS，取回 result 字段（bb-browser eval 的返回值）。"""
         self._require_tab()
-        data = self._run_cli("eval", script, "--tab", self._tab, "--json", timeout=60.0)
+        # 把 --tab 放在 script 之前，保证 CLI parser 能稳定解析到 tabId
+        data = self._run_cli("eval", "--tab", self._tab, script, "--json", timeout=60.0)
         return data.get("result")
 
     def _eval_json(self, script: str) -> object:
@@ -348,6 +370,14 @@ class BbBrowserDriver(Driver):
 
         # 页面加载有快慢，定位与点击放进轮询：找不到就随抖动间隔重试。
         def click_new_project() -> str | None:
+            # 优先通过 DOM eval 点击 New project（实测 React 对快照 CDP click 无响应，DOM click 可靠触发）
+            try:
+                res = self._eval_json(NEW_PROJECT_DOM_CLICK_JS)
+                if res == "clicked":
+                    return "clicked"
+            except DriverError:
+                pass
+            # 兜底：快照查找与 CDP click
             try:
                 refs = self._snap()
             except DriverError:
@@ -369,7 +399,8 @@ class BbBrowserDriver(Driver):
         self._log("已点击 New project，等待进入项目画布")
 
         def project_url_if_ready() -> str | None:
-            value = self._run_cli("get", "url", "--tab", self._tab, "--json").get("url")
+            data = self._run_cli("get", "url", "--tab", self._tab, "--json")
+            value = data.get("value") or data.get("url")
             if isinstance(value, str) and PROJECT_URL_MARKER in value:
                 return value
             return None
@@ -411,8 +442,18 @@ class BbBrowserDriver(Driver):
         data_base64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
         mime = _MIME_BY_SUFFIX.get(image_path.suffix.lower(), "application/octet-stream")
 
-        # 1. 打开 Start 对话框（页面加载有快慢，定位放进轮询）。
+        # 1. 打开 Start 对话框（页面加载有快慢，定位与点击放进轮询）。
         def open_dialog() -> str | None:
+            # 优先通过 DOM eval 点击 Start 槽（Radix UI 触发器）
+            try:
+                res = self._eval_json(START_SLOT_DOM_CLICK_JS)
+                if res == "clicked":
+                    # 验证对话框是否已成功弹出
+                    refs = self._snap()
+                    if self._try_find_ref(refs, LOCATORS["uploads_tab"]) is not None:
+                        return "clicked"
+            except DriverError:
+                pass
             try:
                 refs = self._snap()
             except DriverError:
@@ -432,15 +473,54 @@ class BbBrowserDriver(Driver):
             ),
         )
 
-        # 2. 进入 Uploads 标签并记录网格基线（注入前快照）。
-        refs = self._snap()
-        self._click(self._find_ref(refs, LOCATORS["uploads_tab"]))
+        # 2. 进入 Uploads 标签（对话框渲染有微小延迟，放入轮询等待）并记录网格基线。
+        def click_uploads_tab() -> str | None:
+            # 优先通过 DOM eval 点击 Uploads 标签
+            try:
+                res = self._eval_json(UPLOADS_TAB_DOM_CLICK_JS)
+                if res == "clicked":
+                    return "clicked"
+            except DriverError:
+                pass
+            try:
+                refs = self._snap()
+            except DriverError:
+                return None
+            ref = self._try_find_ref(refs, LOCATORS["uploads_tab"])
+            if ref is None:
+                return None
+            self._click(ref)
+            return ref
+            return ref
+
+        self._poll(
+            self._page_ready_timeout,
+            click_uploads_tab,
+            timeout_error=(
+                "未定位到 Start 对话框内 Uploads 标签（定位表条目 uploads_tab；"
+                "Flow 可能已改版，请校准定位表或先跑冒烟脚本）"
+            ),
+        )
         baseline = self._uploads_media_names()
 
         # 3. DataTransfer 注入（只派发 change 事件）。
-        outcome = self._eval_json(
-            inject_file_js(data_base64, image_path.name, mime)
-        )
+        # 若 base64 较长（超过 2048 字符），按 2048 字符分片写入页内全局变量，避免 Windows cmd.exe 8191 字符限制。
+        var_name = "__styleforge_upload_b64"
+        if len(data_base64) > 2048:
+            self._eval(f"window['{var_name}'] = '';")
+            chunk_size = 2048
+            for i in range(0, len(data_base64), chunk_size):
+                chunk = json.dumps(data_base64[i : i + chunk_size])
+                self._eval(f"window['{var_name}'] += {chunk};")
+            outcome = self._eval_json(
+                inject_file_from_var_js(var_name, image_path.name, mime)
+            )
+            self._eval(f"delete window['{var_name}'];")
+        else:
+            outcome = self._eval_json(
+                inject_file_js(data_base64, image_path.name, mime)
+            )
+
         if outcome != "injected":
             raise DriverError(
                 f"首帧注入失败：页面未找到隐藏的图片上传 input[type=file] "
@@ -474,9 +554,15 @@ class BbBrowserDriver(Driver):
                 f"Uploads 网格点选新素材失败（返回 {clicked}；媒体 {media_name}）"
             )
 
-        # 6. Add to Prompt（原生 click）。
+        # 6. Add to Prompt（优先原生 click，DOM eval 兜底）。
         refs = self._snap()
-        self._click(self._find_ref(refs, LOCATORS["add_to_prompt"]))
+        add_ref = self._try_find_ref(refs, LOCATORS["add_to_prompt"])
+        if add_ref is not None:
+            self._click(add_ref)
+        try:
+            self._eval_json(ADD_TO_PROMPT_DOM_CLICK_JS)
+        except Exception:
+            pass
 
         # 7. 验证 Start 槽挂上了这张图。
         self._poll(
@@ -507,7 +593,16 @@ class BbBrowserDriver(Driver):
         self._log("已清空 Start 首帧槽")
 
     def set_prompt(self, text: str) -> None:
-        """用 bb-browser 原生 fill 填提示词（CDP 真实输入事件，React 页面可靠）。"""
+        """用 Slate.js React 状态树注入提示词（同步触发 React 状态更新激活 Create 按钮），CDP fill 兜底。"""
+        # 优先通过 Slate.js Fiber 节点直接注入并通知 React onChange（100% 激活 Create 按钮）
+        try:
+            res = self._eval_json(set_slate_prompt_js(text))
+            if res == "injected":
+                self._log(f"已填写提示词（{len(text)} 字，Slate 状态树同步激活）")
+                return
+        except DriverError:
+            pass
+
         refs = self._snap()
         ref = self._find_ref(refs, LOCATORS["prompt_box"])
         self._fill(ref, text)
@@ -528,7 +623,18 @@ class BbBrowserDriver(Driver):
             )
 
         refs = self._snap()
-        self._click(self._find_ref(refs, LOCATORS["params_button"]))
+        p_ref = self._find_ref(refs, LOCATORS["params_button"])
+        self._click(p_ref)
+        # 兜底派发 pointerdown / click 确保 Radix 菜单弹出
+        try:
+            self._eval(
+                'var b = Array.from(document.querySelectorAll("button")).find('
+                'x => (x.textContent||"").indexOf("Video ·") !== -1);'
+                'if (b) { b.dispatchEvent(new PointerEvent("pointerdown", {bubbles: true})); b.click(); }'
+            )
+        except Exception:
+            pass
+
         self._click_panel_option(LOCATORS["params_model_option"], display_model)
         self._click_panel_option(
             LOCATORS["params_duration_option"], duration_display(duration)
@@ -539,6 +645,10 @@ class BbBrowserDriver(Driver):
         )
         self._require_tab()
         self._run_cli("press", "Escape", "--tab", self._tab, "--json")
+        try:
+            self._eval_json(CLOSE_MENU_ESCAPE_JS)
+        except Exception:
+            pass
         self._log(f"已配置参数：{model} / {duration} 秒 / {aspect} / 输出 {outputs}")
 
     def generate(self) -> None:
@@ -550,6 +660,11 @@ class BbBrowserDriver(Driver):
         refs = self._snap()
         ref = self._find_ref(refs, LOCATORS["create_button"])
         self._click(ref)
+        # 兜底触发 React onClick 与 DOM click
+        try:
+            self._eval_json(CREATE_BUTTON_DOM_CLICK_JS)
+        except Exception:
+            pass
         self._log("已提交生成（Create）")
 
     def wait_for_completion(self, timeout: float) -> ClipInfo:

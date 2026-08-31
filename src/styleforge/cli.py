@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import struct
 import sys
+import zlib
 from pathlib import Path
 from typing import Annotated
 
@@ -15,7 +17,15 @@ from styleforge.frames import mad as compute_mad
 from styleforge.frames import extract_first_frame, extract_last_frame
 from styleforge.runner import RunOptions, RunReport, RunStateError
 from styleforge.runner import run as run_script
-from styleforge.script import ScriptInvalid, load_script, output_dir
+from styleforge.script import (
+    Defaults,
+    FirstFrame,
+    Script,
+    ScriptInvalid,
+    Shot,
+    load_script,
+    output_dir,
+)
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -231,3 +241,266 @@ def mad(
         typer.echo(f"结论：MAD {value:.2f} 超过阈值 {threshold:.2f}，判定不通过")
         raise typer.Exit(code=1)
     typer.echo(f"结论：MAD {value:.2f} 未超过阈值 {threshold:.2f}，判定通过")
+
+
+def _ensure_smoke_image(target_path: Path) -> Path:
+    """确保测试用首帧图就绪（若不存在则生成标准的 1280x720 纯色 PNG 图）。"""
+    if target_path.is_file():
+        return target_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = 1280, 720
+    # 生成深蓝/靛青底色，RGB: (24, 48, 89)
+    raw_row = b"\x00" + bytes((24, 48, 89)) * width
+    raw_data = raw_row * height
+    compressed = zlib.compress(raw_data)
+
+    def _png_chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr_data)
+        + _png_chunk(b"IDAT", compressed)
+        + _png_chunk(b"IEND", b"")
+    )
+    target_path.write_bytes(png_bytes)
+    return target_path
+
+
+@app.command()
+def smoke(
+    image: Annotated[
+        Path | None,
+        typer.Option("--image", "-i", help="首帧锚定测试图路径（若不提供则自动生成 1280x720 测试图）"),
+    ] = None,
+    fake: Annotated[
+        bool,
+        typer.Option("--fake", help="使用内存假驱动（离线测试，零网络零积分）"),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="显式授权真实生成（将消耗 Flow 点数，零自动重试）"),
+    ] = False,
+    wait_timeout: Annotated[
+        float,
+        typer.Option("--wait-timeout", help="等待单镜生成完成的超时上限（秒）"),
+    ] = 600.0,
+) -> None:
+    """单镜端到端冒烟测试：开项目 → 传首帧 → 生成 8s 视频 → 下载校验 → 抽取首尾帧 → 计算 MAD。"""
+    if not fake and not yes:
+        if _is_interactive():
+            typer.echo(
+                "【点数授权确认】真实冒烟测试将通过 bb-browser 驱动 Chrome 操作 Google Flow。\n"
+                "预计消耗：Omni 1.1 Flash / 8 秒 / 1 镜（参考消耗约 20 积分档，真实生成失败零自动重试）。"
+            )
+            if not typer.confirm("确认执行真实冒烟？", default=False):
+                typer.echo("已取消：未获授权，未消耗任何点数。")
+                raise typer.Exit(code=1) from None
+        else:
+            typer.echo(
+                "错误：真实冒烟将消耗 Flow 点数（真实生成失败零自动重试）。"
+                "非交互环境必须提供 --yes 授权后才能执行；"
+                "如只想验证流程，请使用 --fake 模式。"
+            )
+            raise typer.Exit(code=1) from None
+
+    target_dir = Path("output/smoke").resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if image is None:
+        image_path = _ensure_smoke_image(target_dir / "smoke-start.png")
+    else:
+        if not image.is_file():
+            typer.echo(f"错误：指定的首帧图片不存在：{image}")
+            raise typer.Exit(code=1)
+        image_path = image.resolve()
+
+    script = Script(
+        name="smoke",
+        defaults=Defaults(
+            model="omni-1.1-flash",
+            duration=8,
+            aspect="16:9",
+            outputs=1,
+            download="original-720p",
+            retry=0,
+            mad_threshold=25.0,
+        ),
+        shots=[
+            Shot(
+                prompt="A calm cinematic camera panning across a serene landscape, highly detailed 8k",
+                first_frame=FirstFrame(source="image", path=str(image_path)),
+            )
+        ],
+    )
+
+    options = RunOptions(
+        retry_simulation=fake,
+        resume=False,
+        wait_timeout=wait_timeout,
+        log=typer.echo,
+    )
+    driver: FakeDriver | BbBrowserDriver = FakeDriver() if fake else BbBrowserDriver(log=typer.echo)
+
+    typer.echo("=== 开始执行单镜冒烟测试 ===")
+    try:
+        report = run_script(script, driver, base_dir=target_dir, options=options)
+    except RunStateError as exc:
+        typer.echo(f"冒烟失败：{exc}")
+        raise typer.Exit(code=1) from None
+
+    if not report.completed:
+        typer.echo(f"冒烟未完成：{report.stopped_reason or '执行失败'}")
+        raise typer.Exit(code=1)
+
+    shot_summary = report.shots[0]
+    shots_dir = report.output_dir / "shots"
+    video_path = shots_dir / "shot-01.mp4"
+    first_frame_path = shots_dir / "shot-01-first.png"
+    last_frame_path = shots_dir / "shot-01-last.png"
+    mad_file = shots_dir / "shot-01-mad.json"
+
+    typer.echo("\n=== 冒烟测试成功证据链 ===")
+    typer.echo(f"✓ 视频产物：{video_path.as_posix()}")
+    typer.echo(f"✓ 首帧抽取：{first_frame_path.as_posix()}")
+    typer.echo(f"✓ 尾帧抽取：{last_frame_path.as_posix()}")
+    if shot_summary.mad is not None:
+        typer.echo(f"✓ 首帧比对 MAD：{shot_summary.mad:.2f}（阈值 25.0）")
+    typer.echo(f"✓ 质量记录：{mad_file.as_posix()}")
+    typer.echo("冒烟测试全流程通过！")
+
+
+@app.command("drift-test")
+def drift_test(
+    shots: Annotated[
+        int,
+        typer.Option("--shots", "-n", help="接力镜头数（默认 3）"),
+    ] = 3,
+    image: Annotated[
+        Path | None,
+        typer.Option("--image", "-i", help="第 1 镜初始锚定图片路径（若不提供则自动生成）"),
+    ] = None,
+    fake: Annotated[
+        bool,
+        typer.Option("--fake", help="使用内存假驱动（离线测试，零网络零积分）"),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="显式授权真实生成（将消耗 Flow 点数，零自动重试）"),
+    ] = False,
+    wait_timeout: Annotated[
+        float,
+        typer.Option("--wait-timeout", help="等待单镜生成完成的超时上限（秒）"),
+    ] = 600.0,
+) -> None:
+    """尾帧接力漂移实验：逐跳 MAD 与累积漂移分析（实证检验接力模式一致性）。"""
+    if shots < 2:
+        typer.echo("错误：drift-test 至少需要 2 个镜头进行接力测试。")
+        raise typer.Exit(code=1)
+
+    if not fake and not yes:
+        if _is_interactive():
+            typer.echo(
+                "【点数授权确认】真实 Drift 接力实验将通过 bb-browser 驱动 Chrome 操作 Google Flow。\n"
+                f"预计消耗：Omni 1.1 Flash / 8 秒 / {shots} 镜（尾帧接力模式，参考消耗约 {shots * 20} 积分档，真实生成失败零自动重试）。"
+            )
+            if not typer.confirm("确认执行真实 Drift 实验？", default=False):
+                typer.echo("已取消：未获授权，未消耗任何点数。")
+                raise typer.Exit(code=1) from None
+        else:
+            typer.echo(
+                f"错误：真实 Drift 实验将消耗约 {shots * 20} 积分（真实生成失败零自动重试）。"
+                "非交互环境必须提供 --yes 授权后才能执行；"
+                "如只想验证流程，请使用 --fake 模式。"
+            )
+            raise typer.Exit(code=1) from None
+
+    target_dir = Path("output/drift-test").resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if image is None:
+        image_path = _ensure_smoke_image(target_dir / "drift-anchor.png")
+    else:
+        if not image.is_file():
+            typer.echo(f"错误：指定的首帧图片不存在：{image}")
+            raise typer.Exit(code=1)
+        image_path = image.resolve()
+
+    shot_list = [
+        Shot(
+            prompt="Cinematic shot 1, stable realistic character in scenic environment",
+            first_frame=FirstFrame(source="image", path=str(image_path)),
+        )
+    ]
+    for idx in range(2, shots + 1):
+        shot_list.append(
+            Shot(
+                prompt=f"Cinematic continuation shot {idx}, character moving naturally",
+                first_frame=FirstFrame(source="last_frame"),
+            )
+        )
+
+    script = Script(
+        name="drift-test",
+        defaults=Defaults(
+            model="omni-1.1-flash",
+            duration=8,
+            aspect="16:9",
+            outputs=1,
+            download="original-720p",
+            retry=0,
+            mad_threshold=25.0,
+        ),
+        shots=shot_list,
+    )
+
+    options = RunOptions(
+        retry_simulation=fake,
+        resume=False,
+        wait_timeout=wait_timeout,
+        log=typer.echo,
+    )
+    driver: FakeDriver | BbBrowserDriver = FakeDriver() if fake else BbBrowserDriver(log=typer.echo)
+
+    typer.echo(f"=== 开始执行 {shots} 跳尾帧接力漂移实验 ===")
+    try:
+        report = run_script(script, driver, base_dir=target_dir, options=options)
+    except RunStateError as exc:
+        typer.echo(f"实验中断：{exc}")
+        raise typer.Exit(code=1) from None
+
+    if not report.completed:
+        typer.echo(f"实验未完成：{report.stopped_reason or '执行失败'}")
+        raise typer.Exit(code=1)
+
+    typer.echo("\n=== 尾帧接力漂移分析报告 ===")
+    typer.echo(f"初始锚定图：{image_path.as_posix()}")
+    anchor_img = image_path
+
+    for summary in report.shots:
+        s_idx = summary.index
+        shots_dir = report.output_dir / "shots"
+        video_path = shots_dir / f"shot-{s_idx:02d}.mp4"
+        first_frame = shots_dir / f"shot-{s_idx:02d}-first.png"
+        last_frame = shots_dir / f"shot-{s_idx:02d}-last.png"
+
+        step_mad = summary.mad
+        step_str = f"{step_mad:.2f}" if step_mad is not None else "N/A"
+
+        try:
+            cum_mad = compute_mad(anchor_img, first_frame) if first_frame.is_file() else None
+            cum_str = f"{cum_mad:.2f}" if cum_mad is not None else "N/A"
+        except Exception:
+            cum_mad = None
+            cum_str = "计算异常"
+
+        status_flag = "✓ 正常" if (cum_mad is not None and cum_mad <= 25.0) else "⚠️ 漂移偏高"
+        typer.echo(
+            f"镜头 {s_idx:02d}：单跳接力 MAD = {step_str} | 相对初始锚定累积 MAD = {cum_str} [{status_flag}]"
+        )
+        typer.echo(f"  - 首帧：{first_frame.as_posix()}")
+        typer.echo(f"  - 尾帧：{last_frame.as_posix()}")
+
+    typer.echo("漂移实验完成，全部产物已归档。")
