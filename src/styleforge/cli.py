@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from styleforge.bb_driver import BbBrowserDriver
 from styleforge.fake_driver import FakeDriver
 from styleforge.frames import FramesError
 from styleforge.frames import mad as compute_mad
@@ -21,9 +23,14 @@ app = typer.Typer(
 )
 
 
+def _is_interactive() -> bool:
+    """当前是否为交互式终端（授权闸门据此决定走确认对话框还是要求显式旗标）。"""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 @app.callback()
 def main() -> None:
-    """styleforge：校验 YAML 剧本，并（后续工单）驱动 Google Flow 链式生成连续视频。"""
+    """styleforge：校验 YAML 剧本，驱动 Google Flow 链式生成连续视频（真实生成需显式授权）。"""
 
 
 @app.command()
@@ -67,10 +74,21 @@ def run(
         bool,
         typer.Option("--resume", help="断点续跑：加载 run-state.json，跳过已成功镜头"),
     ] = False,
+    wait_timeout: Annotated[
+        float,
+        typer.Option("--wait-timeout", help="等待单镜生成完成的超时上限（秒）"),
+    ] = 600.0,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            help="显式授权真实生成（将消耗 Flow 点数，零自动重试）；非交互环境必须提供本旗标",
+        ),
+    ] = False,
 ) -> None:
-    """按剧本逐镜生成并归档；当前仅 --fake 模式可用（真实驱动属后续工单）。"""
+    """按剧本逐镜生成并归档；真实模式需显式授权（未经明示授权零消耗）。"""
     if script_path is None:
-        typer.echo("错误：缺少剧本文件路径。用法：styleforge run <剧本.yaml> --fake")
+        typer.echo("错误：缺少剧本文件路径。用法：styleforge run <剧本.yaml> [--fake]")
         raise typer.Exit(code=1)
     try:
         script = load_script(script_path)
@@ -79,17 +97,46 @@ def run(
         for number, message in enumerate(exc.errors, start=1):
             typer.echo(f"{number}. {message}")
         raise typer.Exit(code=1) from None
-    if not fake:
-        typer.echo(
-            "错误：真实驱动模式尚未接入（bb-browser 驱动属后续工单），"
-            "且真实生成默认拒绝执行。请先用 --fake 模式验证剧本与编排。"
+
+    if fake:
+        # fake 模式启用重试模拟（测试编排 retry 分支）；真实模式零自动重试。
+        options = RunOptions(
+            retry_simulation=True,
+            resume=resume,
+            wait_timeout=wait_timeout,
+            log=typer.echo,
         )
-        raise typer.Exit(code=1)
-    # fake 模式启用重试模拟（测试编排 retry 分支）；真实模式将是零自动重试。
-    options = RunOptions(retry_simulation=True, resume=resume, log=typer.echo)
+        driver: FakeDriver | BbBrowserDriver = FakeDriver()
+    else:
+        # 授权闸门（Amendments 第 5 条）：一切真实生成默认拒绝执行，
+        # 需交互确认或显式授权旗标；未经明示授权零消耗。
+        if not yes:
+            if _is_interactive():
+                typer.echo(
+                    "真实模式将通过 bb-browser 驱动你的 Chrome 操作 Google Flow，"
+                    "将消耗 Flow 点数（真实生成失败零自动重试）。"
+                )
+                if not typer.confirm("确认执行真实生成？", default=False):
+                    typer.echo("已取消：未获授权，未消耗任何点数。")
+                    raise typer.Exit(code=1) from None
+            else:
+                typer.echo(
+                    "错误：真实模式将消耗 Flow 点数（真实生成零自动重试）。"
+                    "非交互环境必须显式传旗标 --yes 授权后才能执行；"
+                    "如只想验证剧本与编排，请用 --fake 模式。"
+                )
+                raise typer.Exit(code=1) from None
+        options = RunOptions(
+            retry_simulation=False,
+            resume=resume,
+            wait_timeout=wait_timeout,
+            log=typer.echo,
+        )
+        driver = BbBrowserDriver(log=typer.echo)
+
     try:
         report = run_script(
-            script, FakeDriver(), base_dir=script_path.parent, options=options
+            script, driver, base_dir=script_path.parent, options=options
         )
     except RunStateError as exc:
         typer.echo(f"错误：{exc}")
