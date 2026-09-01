@@ -1,5 +1,9 @@
 # FlowForge
 
+[![CI](https://github.com/hongrenw111-debug/flowforge/actions/workflows/ci.yml/badge.svg)](https://github.com/hongrenw111-debug/flowforge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+
 > 🤖 **Agent-Native AI Director for Google Flow**  
 > **面向 AI 智能体（LLM / Coding Agents）的声明式短剧与连续视频自动生成工作台**  
 > 零 API Key 依赖 · 真实浏览器 CDP 驱动 · 锚定帧/尾帧接力双模式 · 物理级伪视频拦截与 MAD 质检双闸
