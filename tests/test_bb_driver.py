@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from styleforge.bb_driver import BbBrowserDriver
-from styleforge.driver import DriverError
+from flowforge.bb_driver import BbBrowserDriver
+from flowforge.driver import DriverError
 
 
 class Always:
@@ -107,7 +107,7 @@ def test_default_runner_assembles_command_with_binary(monkeypatch):
         captured["argv"] = list(argv)
         return subprocess.CompletedProcess(argv, 0, stdout='{"result": {}}', stderr="")
 
-    monkeypatch.setattr("styleforge.bb_driver.subprocess.run", fake_run)
+    monkeypatch.setattr("flowforge.bb_driver.subprocess.run", fake_run)
     driver = BbBrowserDriver(binary="bb-browser")
     payload = driver._run_cli("get", "url", "--tab", "a020", "--json")
     assert payload == {}
@@ -637,7 +637,7 @@ def test_wait_for_completion_takes_first_new_variant():
 
 
 def test_wait_for_completion_timeout_raises_driver_timeout():
-    from styleforge.driver import DriverTimeoutError
+    from flowforge.driver import DriverTimeoutError
 
     cli = FakeCli(Always((0, eval_json(["old-1"]), "")))
     driver = make_driver(cli, poll_interval=(0.5, 1.0))

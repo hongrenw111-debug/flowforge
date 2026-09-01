@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from styleforge.cli import app
+from flowforge.cli import app
 
 runner = CliRunner()
 

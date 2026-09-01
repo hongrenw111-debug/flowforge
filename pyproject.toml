@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "styleforge"
+name = "flowforge"
 version = "0.1.0"
-description = "驱动 Google Flow 网页端、把一串镜头按剧本链式生成连续视频的本地 CLI 工作台"
+description = "声明式剧本驱动的 Google Flow 视频生成与质量把关工作台（支持锚定帧画风锁定与尾帧接力）"
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
@@ -18,7 +18,8 @@ dependencies = [
 dev = ["pytest>=8.2"]
 
 [project.scripts]
-styleforge = "styleforge.cli:app"
+flowforge = "flowforge.cli:app"
+styleforge = "flowforge.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]

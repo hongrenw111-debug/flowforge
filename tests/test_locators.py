@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from styleforge import locators
-from styleforge.locators import (
+from flowforge import locators
+from flowforge.locators import (
     ASPECT_DISPLAY_NAMES,
     LOCATORS,
     MODEL_DISPLAY_NAMES,
@@ -18,7 +18,7 @@ from styleforge.locators import (
     inject_file_js,
     upload_click_js,
 )
-from styleforge.script import MODEL_CATALOG
+from flowforge.script import MODEL_CATALOG
 
 
 EXPECTED_KEYS = (
@@ -94,7 +94,7 @@ def test_model_display_names_covers_default_model():
 
 
 def test_aspect_display_names_cover_catalog():
-    from styleforge.script import ASPECT_RATIOS
+    from flowforge.script import ASPECT_RATIOS
 
     assert set(ASPECT_DISPLAY_NAMES) == set(ASPECT_RATIOS)
 

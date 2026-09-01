@@ -28,9 +28,9 @@ import time
 from pathlib import Path
 from typing import Callable, Sequence
 
-from styleforge.driver import ClipInfo, Driver, DriverError, DriverTimeoutError
-from styleforge.frames import FramesError, ensure_valid_video
-from styleforge.locators import (
+from flowforge.driver import ClipInfo, Driver, DriverError, DriverTimeoutError
+from flowforge.frames import FramesError, ensure_valid_video
+from flowforge.locators import (
     ADD_TO_PROMPT_DOM_CLICK_JS,
     ASPECT_DISPLAY_NAMES,
     CLOSE_MENU_ESCAPE_JS,
@@ -114,7 +114,7 @@ def _sanitize_text(text: str, limit: int = _SANITIZE_LIMIT) -> str:
 class BbBrowserDriver(Driver):
     """驱动用户真实 Chrome 的后台标签页操作 Google Flow。
 
-    全部页面操作走定位表（styleforge.locators）；标签页短 ID 全程复用；
+    全部页面操作走定位表（flowforge.locators）；标签页短 ID 全程复用；
     等待类操作的超时与轮询抖动均可注入，测试零等待。
     """
 
@@ -505,7 +505,7 @@ class BbBrowserDriver(Driver):
 
         # 3. DataTransfer 注入（只派发 change 事件）。
         # 若 base64 较长（超过 2048 字符），按 2048 字符分片写入页内全局变量，避免 Windows cmd.exe 8191 字符限制。
-        var_name = "__styleforge_upload_b64"
+        var_name = "__flowforge_upload_b64"
         if len(data_base64) > 2048:
             self._eval(f"window['{var_name}'] = '';")
             chunk_size = 2048

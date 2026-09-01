@@ -18,15 +18,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from styleforge.driver import Driver
-from styleforge.frames import (
+from flowforge.driver import Driver
+from flowforge.frames import (
     FramesError,
     ensure_valid_video,
     extract_first_frame,
     extract_last_frame,
     mad,
 )
-from styleforge.script import (
+from flowforge.script import (
     Script,
     Shot,
     effective_shot_params,

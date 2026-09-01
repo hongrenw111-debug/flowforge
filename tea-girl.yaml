@@ -14,3 +14,7 @@ shots:
     first_frame:
       source: image
       path: assets/tea-girl.png
+
+  - prompt: "特写镜头。金发绿瞳的少女眼神流转，双手端起冒着轻微白汽的精致茶杯，低头轻轻抿了一口红茶，随后抬起头眨眼微笑，金发随动作轻微晃动，阳光在茶汤与发丝上泛着柔光。(Audio: gentle cup clinking, soft sipping, sweet sigh of satisfaction, '呼……味道刚刚好呢。')"
+    first_frame:
+      source: last_frame

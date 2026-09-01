@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from styleforge.frames import (
+from flowforge.frames import (
     FramesError,
     extract_first_frame,
     extract_last_frame,

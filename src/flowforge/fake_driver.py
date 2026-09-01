@@ -12,8 +12,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from styleforge.driver import ClipInfo, Driver, DriverError
-from styleforge.frames import MIN_VIDEO_DURATION_SECONDS
+from flowforge.driver import ClipInfo, Driver, DriverError
+from flowforge.frames import MIN_VIDEO_DURATION_SECONDS
 
 _FFMPEG_TIMEOUT = 60
 

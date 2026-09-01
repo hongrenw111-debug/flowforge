@@ -11,7 +11,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from styleforge.cli import app
+from flowforge.cli import app
 
 runner = CliRunner()
 

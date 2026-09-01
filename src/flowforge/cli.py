@@ -1,4 +1,4 @@
-"""styleforge 命令行入口。"""
+"""flowforge 命令行入口。"""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from typing import Annotated
 
 import typer
 
-from styleforge.bb_driver import BbBrowserDriver
-from styleforge.fake_driver import FakeDriver
-from styleforge.frames import FramesError
-from styleforge.frames import mad as compute_mad
-from styleforge.frames import extract_first_frame, extract_last_frame
-from styleforge.runner import RunOptions, RunReport, RunStateError
-from styleforge.runner import run as run_script
-from styleforge.script import (
+from flowforge.bb_driver import BbBrowserDriver
+from flowforge.fake_driver import FakeDriver
+from flowforge.frames import FramesError
+from flowforge.frames import mad as compute_mad
+from flowforge.frames import extract_first_frame, extract_last_frame
+from flowforge.runner import RunOptions, RunReport, RunStateError
+from flowforge.runner import run as run_script
+from flowforge.script import (
     Defaults,
     FirstFrame,
     Script,
@@ -40,7 +40,7 @@ def _is_interactive() -> bool:
 
 @app.callback()
 def main() -> None:
-    """styleforge：校验 YAML 剧本，驱动 Google Flow 链式生成连续视频（真实生成需显式授权）。"""
+    """flowforge：校验 YAML 剧本，驱动 Google Flow 链式生成连续视频（真实生成需显式授权）。"""
 
 
 @app.command()
@@ -49,7 +49,7 @@ def check(
 ) -> None:
     """校验剧本 YAML：合法输出中文 OK 摘要；非法逐条中文报错并以退出码 1 结束。"""
     if script_path is None:
-        typer.echo("错误：缺少剧本文件路径。用法：styleforge check <剧本.yaml>")
+        typer.echo("错误：缺少剧本文件路径。用法：flowforge check <剧本.yaml>")
         raise typer.Exit(code=1)
     try:
         script = load_script(script_path)
@@ -98,7 +98,7 @@ def run(
 ) -> None:
     """按剧本逐镜生成并归档；真实模式需显式授权（未经明示授权零消耗）。"""
     if script_path is None:
-        typer.echo("错误：缺少剧本文件路径。用法：styleforge run <剧本.yaml> [--fake]")
+        typer.echo("错误：缺少剧本文件路径。用法：flowforge run <剧本.yaml> [--fake]")
         raise typer.Exit(code=1)
     try:
         script = load_script(script_path)
@@ -192,7 +192,7 @@ def lastframe(
 ) -> None:
     """抽取视频最后一帧（尾帧）为 PNG，供下一镜头接力使用。"""
     if output is None:
-        typer.echo("错误：缺少输出路径。用法：styleforge lastframe <视频.mp4> -o <输出.png>")
+        typer.echo("错误：缺少输出路径。用法：flowforge lastframe <视频.mp4> -o <输出.png>")
         raise typer.Exit(code=1)
     try:
         out = extract_last_frame(video_path, output)
@@ -209,7 +209,7 @@ def firstframe(
 ) -> None:
     """抽取视频第一帧（首帧）为 PNG，用于验证输入帧是否被模型忠实执行。"""
     if output is None:
-        typer.echo("错误：缺少输出路径。用法：styleforge firstframe <视频.mp4> -o <输出.png>")
+        typer.echo("错误：缺少输出路径。用法：flowforge firstframe <视频.mp4> -o <输出.png>")
         raise typer.Exit(code=1)
     try:
         out = extract_first_frame(video_path, output)

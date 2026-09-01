@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from styleforge.driver import ClipInfo, Driver, DriverError, DriverTimeoutError
-from styleforge.fake_driver import FakeDriver, FakeShotBehavior
-from styleforge.frames import FramesError, ensure_valid_video, extract_first_frame
+from flowforge.driver import ClipInfo, Driver, DriverError, DriverTimeoutError
+from flowforge.fake_driver import FakeDriver, FakeShotBehavior
+from flowforge.frames import FramesError, ensure_valid_video, extract_first_frame
 
 # ---------------------------------------------------------------- 驱动合同
 

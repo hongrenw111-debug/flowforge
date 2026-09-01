@@ -1,4 +1,4 @@
-"""`styleforge lastframe` / `firstframe` / `mad` 的 CLI 级行为测试（离线）。
+"""`flowforge lastframe` / `firstframe` / `mad` 的 CLI 级行为测试（离线）。
 
 只断言外部行为：退出码、中文输出、产物文件；不窥探内部实现。
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from styleforge.cli import app
+from flowforge.cli import app
 
 runner = CliRunner()
 

@@ -2,7 +2,7 @@
 
 剧本 = 有序镜头（Shot）列表 + 全局默认参数（defaults）。
 校验全部产出中文、指名道姓（镜头编号与字段）的错误信息，
-供 `styleforge check` 逐条展示，实现不碰网页的零成本排错。
+供 `flowforge check` 逐条展示，实现不碰网页的零成本排错。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from styleforge.frames import DEFAULT_MAD_THRESHOLD
+from flowforge.frames import DEFAULT_MAD_THRESHOLD
 
 # ---------------------------------------------------------------- 常量表
 

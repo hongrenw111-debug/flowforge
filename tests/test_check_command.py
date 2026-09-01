@@ -1,4 +1,4 @@
-"""`styleforge check` 的 CLI 级行为测试（离线，不碰网络、不碰网页）。
+"""`flowforge check` 的 CLI 级行为测试（离线，不碰网络、不碰网页）。
 
 只断言外部行为：退出码与中文输出内容，不窥探内部实现。
 """
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from styleforge.cli import app
+from flowforge.cli import app
 
 runner = CliRunner()
 

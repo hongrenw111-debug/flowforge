@@ -1,4 +1,4 @@
-"""`styleforge run` 真实模式的授权闸门与驱动接线测试（离线，绝不触碰 bb-browser）。
+"""`flowforge run` 真实模式的授权闸门与驱动接线测试（离线，绝不触碰 bb-browser）。
 
 Amendments 第 5 条：一切真实生成默认拒绝执行，需交互确认或显式授权旗标
 （--yes）；未经明示授权零消耗。驱动构造与编排调用通过 monkeypatch 截获，
@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from styleforge import cli
-from styleforge.cli import app
-from styleforge.fake_driver import FakeDriver
-from styleforge.runner import RunReport, ShotSummary
+from flowforge import cli
+from flowforge.cli import app
+from flowforge.fake_driver import FakeDriver
+from flowforge.runner import RunReport, ShotSummary
 
 runner = CliRunner()
 

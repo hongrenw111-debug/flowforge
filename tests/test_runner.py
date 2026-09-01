@@ -11,10 +11,10 @@ from pathlib import Path
 import pytest
 
 from conftest import make_solid_png
-from styleforge.fake_driver import FakeDriver, FakeShotBehavior
-from styleforge.frames import mad as compute_mad
-from styleforge.runner import RunOptions, RunStateError, run as run_script
-from styleforge.script import load_script
+from flowforge.fake_driver import FakeDriver, FakeShotBehavior
+from flowforge.frames import mad as compute_mad
+from flowforge.runner import RunOptions, RunStateError, run as run_script
+from flowforge.script import load_script
 
 
 @pytest.fixture
@@ -153,7 +153,7 @@ def test_last_frame_chain_passes_previous_artifact(workspace):
     expected_input = shots_dir(workspace, "chain3") / "shot-01-last.png"
     assert ("set_first_frame", str(expected_input)) in driver.calls
     # 内容级传递链：镜 1 产物红色 → 其尾帧红色 → 镜 2 首帧仍红色
-    from styleforge.frames import extract_first_frame
+    from flowforge.frames import extract_first_frame
 
     shot2_first = workspace / "shot2_first_probe.png"
     extract_first_frame(

@@ -1,0 +1,16 @@
+name: tea-party-girl
+
+defaults:
+  model: omni-1.1-flash
+  duration: 8
+  aspect: "9:16"
+  outputs: 1
+  download: original-720p
+  retry: 0
+  mad_threshold: 25.0
+
+shots:
+  - prompt: "特写镜头，微风吹拂。金发绿瞳的少女温柔微笑着，双手端起冒着轻微白汽的精致雕花白瓷茶杯，低头轻轻抿了一口红茶，金发随动作轻微晃动，阳光在茶汤与发丝上泛着柔光。(Audio: gentle cup clinking, soft sipping, '呼……味道刚刚好呢。')"
+    first_frame:
+      source: image
+      path: output/tea-party-girl/shots/shot-01-last.png
